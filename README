@@ -1,0 +1,97 @@
+Date - December 28, 2018
+    Objective:
+        a. I realized stratifying helps to classify under-represented class. In this experiment I am going to
+        combine this technique with weighted loss.
+
+    Results:
+        modelName = 1x256x384_Strat_WeightedLoss_3D16_3D32_3D64_3D128_3D256_3D512_1C1024
+        number of epochs: 100
+        batch size: 8
+	
+	loss: 0.0154 - {'dice_4':0.76, 'dice_1':0.43, 'dice_2':0.82, 'dice_5':0.82, 'dice_6':0.45, 'dice_3':0.75}
+	val_loss: 0.0141 - val_dice_1: 0.0202 - val_dice_2: 0.2061 - val_dice_3: 0.5569 - val_dice_4: 0.1654 - val_dice_5: 0.2201 - val_dice_6: 0.0257
+
+    Val Results:
+        ('chiasm', 0.575), ('brainstem', 0.753), ('cord', 0.713), ('parotid', 0.642), ('mandible', 0.802), ('opric nerve', 0.495)
+
+    Obervations: I am not sure if I used weighted loss function in this case sice training file showed that 
+    there was "categorical_cross_entropy" instead of "weighted_logarithm_loss"
+
+
+************************************************************************************************************************************************************************
+Date - December 27, 2018
+    Objective:
+
+    a. I am trying to improve classification of under-represented class by stratifying batches.
+        i) Find indices which contain labels before training phase
+        ii) Ensure each batch contains at least one class
+    Following are results.
+    
+    Results:
+        modelName = 1x256x384_Stratified_3D16_3D32_3D64_3D128_3D256_3D512_1C1024
+        number of epochs: 100
+        batch size: 8, before it was 4
+        training time: 1365 seconds
+        
+        loss: 0.0155 - {'dice_2': 0.83,'dice_4':0.75,'dice_3':0.76, 'dice_1':0.43,'dice_6': 0.39, 'dice_5':0.81}
+        val_loss: 0.0140 - val_dice_1: 0.0224 - val_dice_2: 0.2104 - val_dice_3: 0.5276 - val_dice_4: 0.1240 - val_dice_5: 0.2145 - val_dice_6: 0.0195
+
+    Val Results:
+	    ('chiasm', 0.472), ('brainstem', 0.745), ('cord', 0.690), ('parotid', 0.613), ('mandible', 0.775), ('optic nerve', 0.583)
+        
+    Observations:
+        Contours look reasonable, true mandible is missing in some slices. Optical nerve and chiasm are segmented well.
+        It seems oversampling under-represented class is helping in this case. I might try combining 
+        two methods, where I also add weighted loss. Loss of train and val are similar indicating less overfitting. 
+
+************************************************************************************************************************************************************************
+Date - November 17, 2018
+    Objective:
+
+
+    b. In the previous training I realized chiasm and optic nerve are not learning anything so I weighted classes as follows:
+        i) Find total number of classes within training ROI
+        ii) Divide it with each class; tot_classes/each_class
+        iii) Take logarithm of this ratio and set lowest value to one
+    Following are results.
+    
+    Results:
+        modelName = 1x256x384_WeightedLoss_3D16_3D32_3D64_3D128_3D256_3D512_1C1024
+        number of epochs: 76
+        training time: 625 seconds        
+        loss: 0.0127 {'dice_1': 0.496, 'dice_2': 0.856, 'dice_3': 0.829, 'dice_4': 0.828, 'dice_5': 0.853, 'dice_6': 0.533}
+        val_loss: 0.0633 - val_dice_1: 0.0128 - val_dice_2: 0.1733 - val_dice_3: 0.5059 - val_dice_4: 0.1153 - val_dice_5: 0.1735 - val_dice_6: 0.0152
+
+    Val Results:
+        ('chiasm', 0.405), ('brainstem', 0.731), ('cord', 0.682), ('parotid', 0.613), ('mandible', 0.784), ('opric nerve', 0.450)
+        
+    Observations:
+        Contours look reasonable, sometimes parotid and mandible are missing. Optical nerve and chiasm are oversegmented. Which is acceptable now.
+
+    a. Started training Head and Neck patients. Found a nice database at
+    https://wiki.cancerimagingarchive.net/pages/viewpage.action?pageId=39879146. This data collection contains three dimensional high-resolution 
+    (3D) fan-beam CT scans collected during pre-treatment, mid-treatment, and post-treatment using a Siemens 16-slice CT scanner with standard 
+    clinical protocol for 31 head-and-neck squamous cell carcinoma (HNSCC) patients. In total we have collected 93 patients. 
+    Our goal is to segment following OAR chiasm, breainstem, spinal cord, mandible, parotid and optical nerve. 
+
+    Pre-processing: Some of the patients were missing contours for optical nerve and chiasm. Hence, we reduced dataset to the ones that had all 
+        contours. At the end there were about 7300 training and 1600 testing CT slices. I use same pre-procesing which I used for prostate
+        contouring with standard normalization and center cropping. I haven't changed model, would like to see how much generlization I can
+        accomplish. 
+        One of the problems is dataset is huge and augmenting+shuffling took too much time to train. Hence, I tried removing shuffling but
+        that produced periodic loss, which would go up till the end of epoch and go down again. Then, I removed augmentation which reduced 
+        training time from ~2200 seconds to ~600 seconds. For now, I will stick to this and see how things progress. 
+
+    Results:
+        modelName = "1x256x384_UNet_3D16_3D32_3D64_3D128_3D256_3D512_1C1024"
+        number of ecpochs: 20
+        loss: 0.0098 {'dice_1': 0.0, 'dice_2': 0.79, 'dice_3': 0.7342, 'dice_4': 0.7284, 'dice_5': 0.8061, 'dice_6': 0.0}
+        val_loss: 0.0124 - val_dice_1: 0 - val_dice_2: 0.1658 - val_dice_3: 0.4500 - val_dice_4: 0.1377 - val_dice_5: 0.3137 - val_dice_6: 0.0
+
+    Val Results:
+        ('chiasm', nan), ('brainstem', 0.69374847), ('cord', 0.66598022), ('parotid', 0.59737486), ('mandible', 0.79049456), ('opric nerve', nan)
+    Observations:
+        I didn't see any improvement after 20th epoch, so decided to sop there. I would like to add weights to balance classes.
+
+
+************************************************************************************************************************************************************************
