@@ -3,10 +3,21 @@ import cv2, h5py, dask
 import dask.array as da
 import dask
 from scipy import ndimage
-from config import *
+from skimage.transform import resize
 from keras.utils.np_utils import to_categorical
 from scipy.ndimage.filters import gaussian_filter
 from scipy.ndimage.interpolation import map_coordinates
+from config import *
+
+
+def remove_body_mask(labelMask):
+    """
+    Convert body to others and decrement all other indices
+    """
+    #find non zero mask
+    nonAir = ~(labelMask==0);    
+    #subtract one from index, 
+    labelMask[nonAir] = labelMask[nonAir]-1;  
 
 def crop_image_roi(img):
     """
@@ -47,7 +58,7 @@ def body_bounding_box(img):
     label[img>200] = 1;
 
     #add white spot at the center
-    img[row_center-5:row_center+5,col_center-5:col_center+5] = img.max();
+    #img[row_center-5:row_center+5,col_center-5:col_center+5] = img.max();
 
     #apply morphology
     body[:row_center] = cv2.morphologyEx(label[:row_center], cv2.MORPH_OPEN, kernel1);
@@ -67,41 +78,80 @@ def body_bounding_box(img):
     return (ymin,ymax),(xmin,xmax)
 
 
-def crop_body_roi(imgInput):
+def crop_body_roi(imgInput,labelInput):
     """
-    Function to dynamically crop ROI of image or label
+    Function to dynamically crop ROI of image and label
     """
     #remove axis
     img = imgInput.squeeze();
 
+    if labelInput is not None:
+        #first remove body mask from labels
+        remove_body_mask(labelInput);
+        #convert to one-hot encoded
+        label = to_categorical(labelInput,num_classes=NUMCLASSES).reshape((-1,W0,H0,NUMCLASSES));   
+
     #first check dimensions of image
     if len(img.shape)==2:
         rows, cols = body_bounding_box(imgInput);
+        #crop and resize image
         imgCrop = imgInput[rows[0]:rows[1],cols[0]:cols[1]];
         imgZoom = cv2.resize(imgCrop,(H,W));
-        return imgZoom
+
+        if labelInput is not None:
+            #crop and resize label
+            labelCrop = label[rows[0]:rows[1],cols[0]:cols[1],:];        
+            labelZoom = resize(labelCrop,(W,H,NUMCLASSES));
+            return imgZoom, labelZoom
+        else:
+            return imgZoom
 
     elif len(img.shape)==3:
         N = img.shape[0];
         cropImg = np.zeros((N,W,H));
+        cropLabel = np.zeros((N,W,H,NUMCLASSES));
 
         for idx in range(N):
             rows, cols = body_bounding_box(imgInput[idx]);
+            #crop and resize image
             imgCrop = imgInput[idx,rows[0]:rows[1],cols[0]:cols[1]];
             imgZoom = cv2.resize(imgCrop,(H,W));
             cropImg[idx] = imgZoom;
-        return cropImg
+        
+            if labelInput is not None:
+                #crop and resize label
+                labelCrop = label[idx,rows[0]:rows[1],cols[0]:cols[1],:];        
+                labelZoom = resize(labelCrop,(W,H,NUMCLASSES));
+                cropLabel[idx] = labelZoom;
+
+        if labelInput is not None:
+            return cropImg, cropLabel
+        else:
+            return cropImg
+
     else:
         sys.exit("compile_dcm_images.crop_body_roi: \n Img size must be (H,W) or (N,H,W)")
 
+
+def pre_process_img_label(imgInput,labelInput,normalize):
+
+    #crop label and image
+    cropImg, cropLabel = crop_body_roi(imgInput,labelInput);
+
+    #apply normalization to image
+    if normalize is not None:
+        nonZero = np.ma.masked_equal(cropImg,0);
+        normalized = ((nonZero-normalize["means"])/normalize["vars"]).data;
+    else:
+        normalized = cropImg;    
+
+    #return processed image label pair
+    return normalized.astype("float32"), cropLabel.astype("float32");
 
 def pre_process_img(imgInput,normalize,removeAir=True):
     """
     Normalizes image in ROI
     """
-    #crop body first
-    #imgInput = crop_body_roi(imgInput);
-
     if removeAir:
         nonZero = np.ma.masked_equal(imgInput,0);
         normalized = ((nonZero-normalize["means"])/normalize["vars"]).data;
@@ -113,11 +163,12 @@ def pre_process_img(imgInput,normalize,removeAir=True):
 
     return normalized.astype("float32");
 
-from compile_dcm_images import remove_body_mask
 def pre_process_label(label,organToSegment=None):
+    """
+    Preprocesses label by removing body
+    """
     #crop image for roi
-    #label = crop_image_roi(label);
-    label = crop_body_roi(label)
+    label = crop_image_roi(label);
 
     #remove body mask
     remove_body_mask(label)
@@ -254,18 +305,13 @@ def data_generator_stratified(hdfFileName,batchSize=50,augment=True,normalize=No
         #print(label_idx_map["2"].queue);
 
         #apply pre-processing operations
-        feature = pre_process_img(img_batch,normalize);
-        organ = pre_process_label(label_batch);
-
-        #convert to one-hot encoded
-        organ = to_categorical(organ,num_classes=NUMCLASSES).reshape((-1,W,H,NUMCLASSES));          
+        #feature = pre_process_img(img_batch,normalize);
+        #organ = pre_process_label(label_batch);
+        feature, organ = pre_process_img_label(img_batch,label_batch,normalize);
 
         #augment data
         if augment:
             feature,organ = augment_data(feature,organ);
-
-        #create generator
-        #yield (feature[...,np.newaxis],{'organ_output':organ});
 
         #yield data 
         yield (feature[...,np.newaxis], {'organ_output':organ})
@@ -297,22 +343,30 @@ def data_generator(hdfFileName,batchSize=50,augment=True,shuffle=True,normalize=
                 idx = end%n;
 
                 #get data    
-                feature = pre_process_img(hdfFile["features"][subIndex,...],normalize);
-                organ = pre_process_label(hdfFile["labels"][subIndex,...]);
+                #feature = pre_process_img(hdfFile["features"][subIndex,...],normalize);
+                #organ = pre_process_label(hdfFile["labels"][subIndex,...]);
+                img_batch = hdfFile["features"][subIndex,...];
+                label_batch = hdfFile["labels"][subIndex,...];
             else:
                 #increment counter
                 idx+=batchSize;
 
                 if shuffle:
                     subIndex = sorted(indices[start:end]);
-                    feature = pre_process_img(hdfFile["features"][subIndex,...],normalize);
-                    organ = pre_process_label(hdfFile["labels"][subIndex,...]);
+                    #feature = pre_process_img(hdfFile["features"][subIndex,...],normalize);
+                    #organ = pre_process_label(hdfFile["labels"][subIndex,...]);
+                    img_batch = hdfFile["features"][subIndex,...];
+                    label_batch = hdfFile["labels"][subIndex,...];
                 else:
-                    feature = pre_process_img(hdfFile["features"][start:end,...],normalize);
-                    organ = pre_process_label(hdfFile["labels"][start:end,...]);
+                    #feature = pre_process_img(hdfFile["features"][start:end,...],normalize);
+                    #organ = pre_process_label(hdfFile["labels"][start:end,...]);
+                    img_batch = hdfFile["features"][start:end,...];
+                    label_batch = hdfFile["labels"][start:end,...];
 
             #convert to one-hot encoded
-            organ = to_categorical(organ,num_classes=NUMCLASSES).reshape((-1,W,H,NUMCLASSES));          
+            #organ = to_categorical(organ,num_classes=NUMCLASSES).reshape((-1,W,H,NUMCLASSES));          
+            feature, organ = pre_process_img_label(img_batch,label_batch,normalize);
+            print(feature.shape, organ.shape)
 
             #augment data
             if augment:

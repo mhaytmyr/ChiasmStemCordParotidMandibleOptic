@@ -4,20 +4,21 @@ import numpy as np
 
 def plot_generator(myGen,normalize):
 
-    rowSlice = slice(50,50+384);
-    columnSlice = slice(0,-1);
-    imgNum = 0;
-    
     idx = 0;
     while True:
         data, label = next(myGen)
-        print(np.unique(label["organ_output"].argmax(axis=-1)))
+        #print(np.unique(label["organ_output"].argmax(axis=-1)))
 
         #apply inverse normalization to image
-        std = crop_image_roi(normalize["vars"][0,...]);
-        means = crop_image_roi(normalize["means"][0,...]);
-        image = data[idx,...,0]*std+means;
-        #image = data[idx,...,0];
+        if normalize is not None:
+            std = normalize["vars"];
+            means = normalize["means"];
+            #get non zero
+            nonZero = np.ma.masked_equal(data[idx].squeeze(),0);
+            image = (nonZero*std+means).data;
+            #image = (data[idx,...,0]*std+means);
+        else:
+            image = data[idx,...,0];
         
         if label["organ_output"].shape[-1]>1:
             true_organ = label["organ_output"][idx,...].argmax(axis=-1);
@@ -25,13 +26,10 @@ def plot_generator(myGen,normalize):
             true_organ = label["organ_output"][idx,...,0];            
 
         #apply morphological tranformation
-        true_organ = true_organ.astype("float32")/true_organ.max();
+        true_organ = true_organ/true_organ.max();
 
         #normalize true labels and input
-        image = (image-image.min())/(image.max()-image.min());
-        
-        #overlay_contours_save(true_organ,image,imgNum)
-        #imgNum += 1;
+        image = (image-image.min())/image.max();
 
         imgStack = np.hstack([true_organ,image])
         cv2.imshow("Plotting slice",imgStack);
@@ -63,8 +61,8 @@ def plot_prediction(valGen,model,normalize):
         data, label = next(valGen)
 
         #apply inverse normalization to image
-        std = crop_image_roi(normalize["vars"][0,...]);
-        means = crop_image_roi(normalize["means"][0,...]);
+        std = crop_image_roi(normalize["vars"]);
+        means = crop_image_roi(normalize["means"]);
         image = data[idx,...,0]*std+means;
         #image = data[idx,...,0]
         
@@ -262,16 +260,12 @@ if __name__=='__main__':
     #now get normalization parameters
     imgMean, imgStd = get_normalization_param(trainFile.replace(".h5","_STAT.h5"));
 
-    #randomly split train test samples
-    #trainGen = data_generator(trainFile,batchSize=BATCHSIZE,augment=False,
-    #        normalize={"means":imgMean,"vars":imgStd},
-    #        shuffle=True)
-    #valGen = data_generator(testFile,batchSize=1,augment=False,
-    #        normalize={"means":imgMean,"vars":imgStd},
-    #        shuffle=False)
-
+    #create train data generator using stratified
     trainGen = data_generator_stratified(trainFile,batchSize=BATCHSIZE,augment=True,
-            normalize={"means":imgMean,"vars":imgStd})
+            #normalize = None
+            normalize={"means":imgMean,"vars":imgStd}
+            )
+    #create test data generator
     valGen = data_generator(testFile,batchSize=BATCHSIZE,augment=False,
             normalize={"means":imgMean,"vars":imgStd},shuffle=False)
     
@@ -284,7 +278,6 @@ if __name__=='__main__':
             pickle.dump(hist.history, fp)
         history = hist.history;
 
-        #convert_keras_tf(quantize=False)
         fig, axes = plt.subplots(ncols=2,nrows=1)
         ax = axes.ravel();
         ax[0].plot(history['loss'],'r*',history['val_loss'],'g^');
@@ -299,19 +292,13 @@ if __name__=='__main__':
 
         
     elif arg=='test':
-        ####for json file####
         model = load_json_model(modelName)
         plot_prediction(valGen,model,normalize={"means":imgMean,"vars":imgStd})
 
-        ####for tensorflow####
-        #graph = load_frozen_model(MODELNAME)
-        #plot_graph_prediction(valGen,graph)
-
     elif arg=='report':
         model = load_json_model(modelName)
-        #plot_cbct_prediction(valGen,model,normalize={"means":imgMean,"vars":imgStd})
         report_validation_results(testFile,model)
 
     elif arg=='plot':
-        plot_generator(valGen,normalize={"means":imgMean,"vars":imgStd})
+        plot_generator(valGen, normalize={"means":imgMean,"vars":imgStd})
         #plot_generator(trainGen,normalize={"means":imgMean,"vars":imgStd})

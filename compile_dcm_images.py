@@ -66,15 +66,7 @@ def post_process_mask(bodyMask,labelMask):
         mask = bodyMask * undefinedMask;
         labelMask[mask.astype('bool')] = newIndex;
     # return labelMask;
-
-def remove_body_mask(labelMask):
-    """
-    Convert body to others and decrement all other indices
-    """
-    #find non zero mask
-    nonAir = ~(labelMask==0);    
-    #subtract one from index, 
-    labelMask[nonAir] = labelMask[nonAir]-1;    
+  
 
 def create_contour_mask(contours,slices):
 
@@ -116,16 +108,11 @@ def create_contour_mask(contours,slices):
 
         #post process current mask
         post_process_mask(imgBody[zIndex,...],imgLabel[zIndex,...]);
-        #remove body from labels        
-        #remove_body_mask(imgLabel[zIndex,...]);
 
         #ax = debug_image_slice(imgLabel[zIndex,...],imgData[zIndex,...],ax);
-
         #if slice contains only body, increment start idx    
         if np.max(imgLabel[zIndex,...])>1:
             organSlices[zIndex] = True;
-    
-    
 
     return imgData[organSlices,...],imgLabel[organSlices,...]
     #return imgData,imgLabel,imgBody
@@ -267,7 +254,7 @@ def save_train_stats(trainFileName):
     batch = 32;
     #apply bounding box preprocesing for each image before stats
     for idx in range(0,data.shape[0],batch):
-        data_crop[idx:idx+batch] = crop_body_roi(data[idx:idx+batch]);
+        data_crop[idx:idx+batch] = crop_body_roi(data[idx:idx+batch],None);
         if idx%256==0:
             print("Processing batch ",idx)
     print("Completed cropping!")
