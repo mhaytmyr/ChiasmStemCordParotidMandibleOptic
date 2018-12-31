@@ -19,6 +19,29 @@ def remove_body_mask(labelMask):
     #subtract one from index, 
     labelMask[nonAir] = labelMask[nonAir]-1;  
 
+def img_to_tensor(array):
+    """
+    Converts numpy array to 4D tensor; Assumes image is passed
+    """
+    #get array shape
+    shape = array.shape;
+
+    if len(shape)==2:
+        return array[np.newaxis,...,np.newaxis];
+    elif len(shape)==3:
+        #num channel exist, batch size missing
+        if (np.prod(shape[1:])==H0*W0) or (np.prod(shape[1:])==H*W):
+            return array[...,np.newaxis]
+        #num batches exist but, channel missing
+        elif (np.prod(shape[:-1])==H0*W0) or (np.prod(shape[:-1])==H*W):        
+            return array[np.newaxis,...]
+        else:
+            print("helper_prepare_data.img_to_tensor: Can't convert ",shape," to 4D tensor");
+    elif len(shape)==4:#already 4D tensor
+        return array
+    else:
+        print("helper_prepare_data.img_to_tensor: Can't convert ",shape," to 4D tensor");
+
 def crop_image_roi(img):
     """
     Crop image with hard-coded ROI
@@ -134,9 +157,16 @@ def crop_body_roi(imgInput,labelInput):
 
 
 def pre_process_img_label(imgInput,labelInput,normalize):
+    """
+    Pre-processes image and label, by cropping and normalizing. 
+    If label is missing returns pre-processed image.
+    """
 
     #crop label and image
-    cropImg, cropLabel = crop_body_roi(imgInput,labelInput);
+    if labelInput is not None:
+        cropImg, cropLabel = crop_body_roi(imgInput,labelInput);
+    else:
+        cropImg = crop_body_roi(imgInput,labelInput);
 
     #apply normalization to image
     if normalize is not None:
@@ -145,8 +175,11 @@ def pre_process_img_label(imgInput,labelInput,normalize):
     else:
         normalized = cropImg;    
 
-    #return processed image label pair
-    return normalized.astype("float32"), cropLabel.astype("float32");
+    if labelInput is not None:
+        #return processed image label pair
+        return normalized.astype("float32"), cropLabel.astype("float32");
+    else:
+        return normalized.astype("float32")
 
 def pre_process_img(imgInput,normalize,removeAir=True):
     """
@@ -305,8 +338,6 @@ def data_generator_stratified(hdfFileName,batchSize=50,augment=True,normalize=No
         #print(label_idx_map["2"].queue);
 
         #apply pre-processing operations
-        #feature = pre_process_img(img_batch,normalize);
-        #organ = pre_process_label(label_batch);
         feature, organ = pre_process_img_label(img_batch,label_batch,normalize);
 
         #augment data
@@ -314,7 +345,8 @@ def data_generator_stratified(hdfFileName,batchSize=50,augment=True,normalize=No
             feature,organ = augment_data(feature,organ);
 
         #yield data 
-        yield (feature[...,np.newaxis], {'organ_output':organ})
+        #yield (feature[...,np.newaxis], {'organ_output':organ})
+        yield (img_to_tensor(feature),{'organ_output':img_to_tensor(organ)});
 
 
 def data_generator(hdfFileName,batchSize=50,augment=True,shuffle=True,normalize=None):
@@ -366,12 +398,11 @@ def data_generator(hdfFileName,batchSize=50,augment=True,shuffle=True,normalize=
             #convert to one-hot encoded
             #organ = to_categorical(organ,num_classes=NUMCLASSES).reshape((-1,W,H,NUMCLASSES));          
             feature, organ = pre_process_img_label(img_batch,label_batch,normalize);
-            print(feature.shape, organ.shape)
 
             #augment data
             if augment:
                 feature,organ = augment_data(feature,organ);
 
             #create generator
-            yield (feature[...,np.newaxis],{'organ_output':organ});
+            yield (img_to_tensor(feature),{'organ_output':img_to_tensor(organ)});
             
